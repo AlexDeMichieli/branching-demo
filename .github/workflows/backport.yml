@@ -1,0 +1,29 @@
+name: Backport merged PR
+
+on:
+  pull_request_target:
+    types: [closed, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  backport:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Open backport PR
+        uses: korthout/backport-action@v3
+        with:
+          # Match labels of the form:  backport release/2026.q3
+          label_pattern: '^backport (?<target>release/.*)$'
+          pull_title: '[Backport ${target_branch}] ${pull_title}'
+          pull_description: |-
+            Automated backport of #${pull_number} into `${target_branch}`.
+
+            Original author: @${pull_author}
+
+            Requires its own review + approvals before merging.

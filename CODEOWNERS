@@ -1,0 +1,5 @@
+# All files: default reviewer
+*                   @AlexDeMichieli
+
+# Backport PRs into the maintenance branch need release-owner sign-off.
+# (In a real repo this would be the release manager for that release line.)
