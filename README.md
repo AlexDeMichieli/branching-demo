@@ -87,6 +87,12 @@ Main PR's `ci` was green. Then the developer force-pushed a new commit to the ma
 
 The invariant is: **check-runs are per-SHA.** GitHub's own machinery invalidates them automatically when the SHA changes. No cleanup logic needed.
 
+## Setup for adopters
+
+- Add a repo secret named **`BOT_TOKEN`** — a Personal Access Token (or a GitHub App installation token) with **`contents: write`** + **`pull-requests: write`** on this repo. Used by `open-paired-backport.yml` for the git push and PR create. Required because `GITHUB_TOKEN`-authored events don't trigger downstream workflows.
+- Enable branch protection on both `main` and each `release/*` branch requiring these check contexts: **`ci`** and **`partner-ci`**.
+- Turn on **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests**.
+
 ## Repo layout
 
 - `hello.py` — the tiny "app" with a fake bug (`refresh_token` returns the same value forever)
