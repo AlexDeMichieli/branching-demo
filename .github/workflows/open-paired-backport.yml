@@ -115,3 +115,22 @@ jobs:
             echo "<!-- paired-pr: ${BACKPORT_PR} -->"
           } > /tmp/comment.md
           gh pr comment "$SOURCE_PR" --body-file /tmp/comment.md
+
+      # ci already ran on the source PR before the paired-pr marker existed,
+      # so its mirror step found nothing and posted no partner-ci on the
+      # backport PR. Re-run ci on the source PR now — it will see the marker
+      # in the comment we just posted and mirror partner-ci onto the backport.
+      - name: Re-run ci on source PR so it picks up the paired-pr marker
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN }}
+          SOURCE_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          RUN_ID=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow ci.yml \
+            --branch "$SOURCE_BRANCH" \
+            --limit 1 \
+            --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$RUN_ID" ]; then
+            gh run rerun "$RUN_ID" --repo "${{ github.repository }}"
+          fi
