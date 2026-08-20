@@ -26,7 +26,10 @@ jobs:
       SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       SOURCE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       LABEL_NAME: ${{ github.event.label.name }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # BOT_TOKEN is a PAT (or App-installation token) — required so the branch
+      # push and PR creation trigger downstream workflows. GITHUB_TOKEN-authored
+      # events do NOT trigger workflows (documented GitHub Actions limitation).
+      GH_TOKEN: ${{ secrets.BOT_TOKEN }}
     steps:
       - name: Extract target branch from label
         id: target
@@ -44,6 +47,7 @@ jobs:
         with:
           ref: ${{ steps.target.outputs.target }}
           fetch-depth: 0
+          token: ${{ secrets.BOT_TOKEN }}
 
       - name: Configure git identity
         run: |
