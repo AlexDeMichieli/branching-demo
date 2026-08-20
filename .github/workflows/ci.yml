@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: read
+  checks: write
+  pull-requests: read
 
 jobs:
   ci:
@@ -18,4 +20,58 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pytest
-      - run: pytest test_hello.py -v
+      - name: Run tests
+        id: pytest
+        run: pytest test_hello.py -v
+
+      # If this run was for a PR, mirror the ci conclusion to the paired PR
+      # as `partner-ci`. Runs even on test failure so the paired PR's gate
+      # goes red too. Combined into this workflow because check_run events
+      # from GITHUB_TOKEN-authored check-runs don't trigger downstream
+      # workflows (documented Actions limitation).
+      - name: Mirror ci conclusion to paired PR as partner-ci
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          CI_CONCLUSION: ${{ steps.pytest.outcome == 'success' && 'success' || 'failure' }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const sourcePR = context.payload.pull_request;
+            if (!sourcePR) { core.info('Not a PR event, skipping'); return; }
+
+            // Find the paired PR number from body or comments
+            const marker = /<!-- paired-pr: (\d+) -->/;
+            let m = sourcePR.body?.match(marker);
+            let pairedNum = m ? parseInt(m[1], 10) : null;
+            if (!pairedNum) {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner, repo, issue_number: sourcePR.number, per_page: 100,
+              });
+              for (const c of comments) {
+                const cm = c.body?.match(marker);
+                if (cm) { pairedNum = parseInt(cm[1], 10); break; }
+              }
+            }
+            if (!pairedNum) {
+              core.info(`PR #${sourcePR.number} has no paired-pr marker — nothing to mirror`);
+              return;
+            }
+
+            const { data: paired } = await github.rest.pulls.get({
+              owner, repo, pull_number: pairedNum,
+            });
+
+            const conclusion = process.env.CI_CONCLUSION;
+            await github.rest.checks.create({
+              owner, repo,
+              name: 'partner-ci',
+              head_sha: paired.head.sha,
+              status: 'completed',
+              conclusion,
+              output: {
+                title: `Paired PR #${sourcePR.number}: ci ${conclusion}`,
+                summary: `Mirrored from [ci on #${sourcePR.number}](${sourcePR.html_url}).`,
+              },
+            });
+            core.notice(`Mirrored ci=${conclusion} onto PR #${pairedNum} as partner-ci`);
