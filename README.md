@@ -44,6 +44,37 @@ A fix on `main` gets a paired backport PR into `release/2026.q3`. Both CIs run a
 
 Branch protection requires **`ci` AND `partner-ci`** on both branches. Neither can merge in isolation.
 
+## How the mutual gate works
+
+Every PR gets one extra check called `partner-ci`. It's a **copy of the *other* PR's `ci`**.
+
+```
+  ┌────────────────┐                        ┌────────────────┐
+  │  PR #42 (main) │                        │  PR #43 (bp)   │
+  │                │                        │                │
+  │   ci  ─ ─ ─ ─ ─┼──── copies to ────────►┼─► partner-ci   │
+  │                │                        │                │
+  │   partner-ci ◄─┼──── copies from ───────┼─ ─ ci          │
+  │                │                        │                │
+  └────────────────┘                        └────────────────┘
+```
+
+The last step of `ci.yml` posts `partner-ci` onto the paired PR after its own tests finish. Branch protection on both branches requires **both** `ci` **and** `partner-ci` to be green.
+
+Which means neither PR can merge unless *both* sides pass:
+
+```
+   ci on #42  │  ci on #43  │  Result
+   ───────────┼─────────────┼─────────────────────
+      ✅      │     ✅      │  Both mergeable
+      ✅      │     ❌      │  Both blocked
+      ❌      │     ✅      │  Both blocked
+      ❌      │     ❌      │  Both blocked
+```
+
+Two ordinary GitHub checks per PR, one of which happens to reflect the other side. That's the entire enforcement — no orchestrator, no lock, no cross-branch transaction.
+
+
 ## The three files that do the work
 
 ```
