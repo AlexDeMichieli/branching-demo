@@ -75,3 +75,22 @@ jobs:
               },
             });
             core.notice(`Mirrored ci=${conclusion} onto PR #${pairedNum} as partner-ci`);
+
+            // Self-heal: if the paired PR is already closed, our own partner-ci
+            // will never receive a mirror again. Post partner-ci=success on
+            // ourselves so a force-push after the paired PR closed doesn't
+            // block us forever.
+            if (paired.state === 'closed') {
+              await github.rest.checks.create({
+                owner, repo,
+                name: 'partner-ci',
+                head_sha: sourcePR.head.sha,
+                status: 'completed',
+                conclusion: 'success',
+                output: {
+                  title: `Paired PR #${pairedNum} is closed`,
+                  summary: `Paired PR #${pairedNum} is no longer open — partner-ci auto-passed.`,
+                },
+              });
+              core.notice(`Self-posted partner-ci=success on PR #${sourcePR.number} (paired closed)`);
+            }

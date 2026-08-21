@@ -1,0 +1,84 @@
+name: Pair lifecycle
+
+# Handles the "PR closed" event to keep the paired PR from getting stuck.
+#
+# Behaviour:
+#   • Backport PR closed unmerged  → post partner-ci=success on the source PR
+#                                    so an opt-out doesn't leave source stuck
+#   • Source PR closed unmerged    → close the backport PR too (orphan cleanup)
+#   • Either PR merged normally    → do nothing (last ci mirror still applies)
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  handle:
+    if: github.event.pull_request.merged == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.BOT_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const closed = context.payload.pull_request;
+
+            const marker = /<!-- paired-pr: (\d+) -->/;
+            let m = closed.body?.match(marker);
+            let pairedNum = m ? parseInt(m[1], 10) : null;
+            if (!pairedNum) {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner, repo, issue_number: closed.number, per_page: 100,
+              });
+              for (const c of comments) {
+                const cm = c.body?.match(marker);
+                if (cm) { pairedNum = parseInt(cm[1], 10); break; }
+              }
+            }
+            if (!pairedNum) { core.info('No paired PR — nothing to do'); return; }
+
+            const { data: paired } = await github.rest.pulls.get({
+              owner, repo, pull_number: pairedNum,
+            });
+            if (paired.state !== 'open') {
+              core.info(`Paired PR #${pairedNum} already closed — nothing to do`);
+              return;
+            }
+
+            const isBackport = closed.head.ref.startsWith('backport/');
+
+            if (isBackport) {
+              // Opt-out: backport closed unmerged → free the source PR
+              await github.rest.checks.create({
+                owner, repo,
+                name: 'partner-ci',
+                head_sha: paired.head.sha,
+                status: 'completed',
+                conclusion: 'success',
+                output: {
+                  title: `Backport PR #${closed.number} closed — not needed`,
+                  summary: `The paired backport PR was closed without merging. This PR can proceed on its own \`ci\`.`,
+                },
+              });
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: pairedNum,
+                body: `ℹ️ Paired backport PR #${closed.number} was closed without merging. \`partner-ci\` marked as success — this PR can merge on its own now.`,
+              });
+              core.notice(`Backport #${closed.number} closed as opt-out; unblocked source #${pairedNum}`);
+            } else {
+              // Source closed unmerged → orphan cleanup
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: pairedNum,
+                body: `ℹ️ Paired source PR #${closed.number} was closed without merging. Closing this backport too.`,
+              });
+              await github.rest.pulls.update({
+                owner, repo, pull_number: pairedNum, state: 'closed',
+              });
+              core.notice(`Source #${closed.number} closed unmerged; closed orphan backport #${pairedNum}`);
+            }
