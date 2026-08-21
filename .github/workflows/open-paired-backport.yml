@@ -1,15 +1,14 @@
 name: Open paired backport PR
 
-# Fires when a `backport <target-branch>` label is added to a PR.
-# Opens the paired backport PR *immediately* (not after merge) so both
-# PRs' CIs run in parallel — solves the "sequential = slow" concern.
+# Fires the moment a PR is opened against main. Automatically opens a paired
+# backport PR against TARGET_BRANCH so both PRs' CIs run in parallel.
 #
-# Uses `pull_request_target` so the workflow definition + secrets come
-# from the base branch, not the PR head — safe against PR injection.
+# No label needed. If a PR shouldn't be backported, close the auto-opened
+# backport PR — the mutual gate then only requires ci on the source PR.
 
 on:
   pull_request_target:
-    types: [labeled]
+    types: [opened, reopened]
 
 permissions:
   contents: write
@@ -17,28 +16,29 @@ permissions:
 
 jobs:
   open:
-    if: startsWith(github.event.label.name, 'backport ')
+    if: >-
+      github.event.pull_request.base.ref == 'main' &&
+      !startsWith(github.event.pull_request.head.ref, 'backport/')
     runs-on: ubuntu-latest
     env:
+      # Change this (or wire it to a repo variable) for repos with a different
+      # maintenance-branch name. Only one target at a time; loop or matrix
+      # if you need multiple.
+      TARGET_BRANCH: release/2026.q3
       SOURCE_PR: ${{ github.event.pull_request.number }}
       SOURCE_TITLE: ${{ github.event.pull_request.title }}
       SOURCE_AUTHOR: ${{ github.event.pull_request.user.login }}
       SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       SOURCE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-      LABEL_NAME: ${{ github.event.label.name }}
-      # BOT_TOKEN is a PAT (or App-installation token) — required so the branch
-      # push and PR creation trigger downstream workflows. GITHUB_TOKEN-authored
-      # events do NOT trigger workflows (documented GitHub Actions limitation).
       GH_TOKEN: ${{ secrets.BOT_TOKEN }}
     steps:
-      - name: Extract target branch from label
+      - name: Compute backport branch name
         id: target
         run: |
-          TARGET="${LABEL_NAME#backport }"
-          SANITIZED="${TARGET//\//-}"
+          SANITIZED="${TARGET_BRANCH//\//-}"
           BRANCH="backport/${SOURCE_PR}-to-${SANITIZED}"
           {
-            echo "target=${TARGET}"
+            echo "target=${TARGET_BRANCH}"
             echo "branch=${BRANCH}"
           } >> "$GITHUB_OUTPUT"
 
@@ -66,7 +66,6 @@ jobs:
           RC=$?
           set -e
           if [ "$RC" -ne 0 ]; then
-            # Commit conflict markers as-is so the developer can push fixes.
             git add -A
             GIT_EDITOR=true git cherry-pick --continue 2>/dev/null \
               || git commit --no-verify --allow-empty \
@@ -99,6 +98,8 @@ jobs:
               echo
             fi
             echo "This PR must pass its own \`ci\` **and** the paired PR's \`partner-ci\` before it can merge."
+            echo
+            echo "If this backport isn't needed, just close this PR — the source PR then only needs its own \`ci\`."
           } > /tmp/body.md
 
           URL=$(gh pr create \
@@ -108,21 +109,17 @@ jobs:
             --body-file /tmp/body.md)
           BACKPORT_PR="${URL##*/}"
 
-          # Cross-link on the source PR so mutual-gate can find the pair.
           {
-            echo "🔗 Paired backport PR opened: #${BACKPORT_PR}"
+            echo "🔗 Paired backport PR opened automatically: #${BACKPORT_PR}"
+            echo
+            echo "If this change should NOT be backported to \`${TARGET}\`, close the paired PR."
             echo
             echo "<!-- paired-pr: ${BACKPORT_PR} -->"
           } > /tmp/comment.md
           gh pr comment "$SOURCE_PR" --body-file /tmp/comment.md
 
-      # ci already ran on the source PR before the paired-pr marker existed,
-      # so its mirror step found nothing and posted no partner-ci on the
-      # backport PR. Re-run ci on the source PR now — it will see the marker
-      # in the comment we just posted and mirror partner-ci onto the backport.
       - name: Re-run ci on source PR so it picks up the paired-pr marker
         env:
-          GH_TOKEN: ${{ secrets.BOT_TOKEN }}
           SOURCE_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           RUN_ID=$(gh run list \
