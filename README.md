@@ -80,7 +80,8 @@ Two ordinary GitHub checks per PR, one of which happens to reflect the other sid
 ```
 .github/workflows/
 ├── ci.yml                       # runs pytest, mirrors result as partner-ci
-└── open-paired-backport.yml     # opens the paired PR when the label is added
+├── open-paired-backport.yml     # opens the paired backport PR when a PR is opened on main
+└── pair-lifecycle.yml           # keeps the pair in sync when one PR closes
 ```
 
 ## When something goes wrong
@@ -173,6 +174,39 @@ Sometimes `release/2026.q3` needs a smaller / different code change than `main` 
   on the backport branch instead of accepting the
   cherry-picked diff. The paired-PR wiring stays intact.
 ```
+
+### 5 · One of the paired PRs gets closed
+
+The `pair-lifecycle.yml` workflow watches for `pull_request: closed` and keeps the remaining PR from getting stuck.
+
+```
+  Backport closed WITHOUT merging  (opt-out)
+        │
+        ▼
+  ┌────────────────────────────────┐
+  │  pair-lifecycle.yml            │
+  │  posts partner-ci = success    │  ──►  source PR:  partner-ci ✅
+  │  on the source PR              │       source can merge on its
+  │                                │       own ci alone
+  └────────────────────────────────┘
+
+  Source closed WITHOUT merging  (accident / cancel)
+        │
+        ▼
+  ┌────────────────────────────────┐
+  │  pair-lifecycle.yml            │
+  │  closes the backport PR too    │  ──►  no orphaned backport
+  │  (leaves a comment)            │
+  └────────────────────────────────┘
+
+  Either PR MERGED normally
+        │
+        ▼
+  Nothing to do — the last ci mirror already left the other side
+  unblocked with partner-ci ✅. Backport can merge on its schedule.
+```
+
+**Force-push after the paired PR has closed:** `ci.yml`'s mirror step also self-heals — if it detects the paired PR is closed, it posts `partner-ci = success` on the current PR's new HEAD. So a force-push on the backport after the source has already merged doesn't leave the backport stuck.
 
 ## Setup for adopters
 
