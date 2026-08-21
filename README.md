@@ -52,26 +52,95 @@ Branch protection requires **`ci` AND `partner-ci`** on both branches. Neither c
 └── open-paired-backport.yml     # opens the paired PR when the label is added
 ```
 
-## Merge conflicts
+## When something goes wrong
 
-**Cherry-pick can't apply cleanly at open time**
+### 1 · Cherry-pick can't apply cleanly
+
+Someone else already touched the same lines on `release/2026.q3`, so the auto cherry-pick collides.
+
 ```
-backport PR opens with <<<<<<< markers in the tree
-→ ci fails (Python won't parse markers)
-→ developer pulls the branch, resolves, pushes
-→ ci re-runs → partner-ci re-mirrors → both green
+  label added
+        │
+        ▼
+  ┌────────────────────────────────┐
+  │  PR #43 (backport) opens with: │      ci ❌
+  │    <<<<<<< HEAD                │       │
+  │    old code                    │       │ mirrors
+  │    =======                     │       ▼
+  │    new code (the fix)          │      partner-ci ❌  on PR #42
+  │    >>>>>>>                     │
+  │  ⚠️ Note in the PR body         │      (main PR blocked)
+  └──────────────┬─────────────────┘
+                 │
+                 │  developer pulls the branch,
+                 │  keeps the right side of the merge,
+                 │  removes the markers, pushes
+                 ▼
+  ┌────────────────────────────────┐
+  │  hello.py is clean now         │      ci ✅  ──►  partner-ci ✅  on PR #42
+  └────────────────────────────────┘
+                                          Both PRs mergeable.
 ```
 
-**Standard conflict later** (someone merged into release/2026.q3)
+### 2 · A conflict appears later
+
+Someone merges an unrelated change into `release/2026.q3` while PR #43 was open, and it touches the same lines.
+
 ```
-GitHub shows "resolve conflicts" banner on the backport PR
-→ developer resolves in the web UI or via local rebase
+  PR #43 (backport) — status changes on its own:
+
+  ┌────────────────────────────────┐
+  │  ⚠️ This branch has conflicts   │      merge button: disabled
+  │      that must be resolved     │
+  │  [ Resolve conflicts ]         │
+  └──────────────┬─────────────────┘
+                 │
+                 │  developer resolves in the web UI
+                 │  (small conflict) or rebases locally
+                 │  and force-pushes the backport branch
+                 ▼
+                                          ci ✅  ──►  partner-ci ✅  on PR #42
+                                          Both PRs mergeable.
 ```
 
-**Force-push on either PR**
+### 3 · Force-push on either PR
+
+Any new commit changes the PR's HEAD SHA. The old `ci` + `partner-ci` were reported against the *old* SHA and no longer count for the new one.
+
 ```
-Check-runs are per-SHA. Old partner-ci no longer applies.
-→ CI re-runs on new SHA → partner-ci re-mirrors → automatic.
+  Before force-push:              After force-push:
+
+  PR #42                          PR #42
+    HEAD: abc123                    HEAD: def456   ← new
+    ci     ✅ (on abc123)           ci     ⏳
+    partner-ci ✅ (on abc123)       partner-ci ⏳   ← required, not yet reported
+
+                                    (merge blocked until fresh checks land)
+
+  What happens automatically:
+    1. ci re-runs on def456
+    2. it mirrors partner-ci → PR #43
+    3. PR #43's next ci run mirrors partner-ci ─► PR #42
+
+  No manual cleanup. Check-runs are per-SHA — GitHub's model handles it.
+```
+
+### 4 · The backport fix has to look *different*
+
+Sometimes `release/2026.q3` needs a smaller / different code change than `main` (main might refactor; release wants the minimal patch).
+
+```
+  PR #42 (main)            PR #43 (backport)
+  refactored fix           different fix
+  (10 files, 200 lines)    (1 file, 3 lines)
+                                                
+  The mutual gate still holds:
+     both PRs' ci must pass
+     both partner-ci must mirror green
+                                                
+  What changes: the developer pushes their own commits
+  on the backport branch instead of accepting the
+  cherry-picked diff. The paired-PR wiring stays intact.
 ```
 
 ## Setup for adopters
