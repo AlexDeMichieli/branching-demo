@@ -5,7 +5,7 @@ def refresh_token(user):
     if not user:
         return None
     # Bug: never actually rotates the token — same value returned forever.
-    return user.get("token")
+        return user.get("token") + "-rotated"
 
 
 def greet(user):
