@@ -119,15 +119,23 @@ jobs:
           gh pr comment "$SOURCE_PR" --body-file /tmp/comment.md
 
       - name: Re-run ci on source PR so it picks up the paired-pr marker
+        continue-on-error: true
         env:
           SOURCE_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
-          RUN_ID=$(gh run list \
+          # Best-effort: only rerun if the previous ci run is already completed.
+          # If it's still in_progress, it will pick up the marker naturally.
+          RUN=$(gh run list \
             --repo "${{ github.repository }}" \
             --workflow ci.yml \
             --branch "$SOURCE_BRANCH" \
             --limit 1 \
-            --json databaseId --jq '.[0].databaseId // empty')
-          if [ -n "$RUN_ID" ]; then
-            gh run rerun "$RUN_ID" --repo "${{ github.repository }}"
+            --json databaseId,status --jq '.[0] // empty')
+          [ -z "$RUN" ] && { echo "no prior ci run — skipping"; exit 0; }
+          STATUS=$(echo "$RUN" | jq -r '.status')
+          RUN_ID=$(echo "$RUN" | jq -r '.databaseId')
+          if [ "$STATUS" = "completed" ]; then
+            gh run rerun "$RUN_ID" --repo "${{ github.repository }}" || echo "rerun failed — non-fatal"
+          else
+            echo "source ci status=$STATUS — will pick up marker on its own, skipping rerun"
           fi
