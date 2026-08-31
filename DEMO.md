@@ -7,7 +7,7 @@ Two browser tabs open:
 - Repo: https://github.com/AlexDeMichieli/branching-demo
 - Actions: https://github.com/AlexDeMichieli/branching-demo/actions
 
-## The story you're telling
+## The story
 
 > A customer filed a bug. `refresh_token()` never actually refreshes. I'll fix it on `main`, and I want the same fix on `release/2026.q3` at the same time. Two PRs, running in parallel, neither mergeable until both pass.
 
@@ -24,26 +24,20 @@ Two browser tabs open:
    ```
 3. **Commit changes...**
 4. Message: `Fix token refresh: always rotate the value`
-5. **⚠ Radio button: "Create a new branch for this commit and start a pull request"** (NOT the direct-to-main option)
+5. **⚠ Radio button: "Create a new branch for this commit and start a pull request"** (NOT direct-to-main)
 6. **Propose changes** → **Create pull request**
 
-Say: *"Normal PR against main. Watch what happens when I add the backport label."*
+Say: *"Normal PR against main. Watch what happens next — no label, no button, nothing."*
 
-## Step 2 — Add the backport label
-
-On the newly-opened PR:
-
-1. Right sidebar → **Labels** (gear icon)
-2. Tick **`backport release/2026.q3`**
-3. Click outside to close
+## Step 2 — The backport PR opens automatically
 
 Switch to **Actions tab**. Within ~5 seconds:
 
 - **Open paired backport PR** run starts and finishes in ~20 seconds
-- **ci** run starts on the main PR (from step 1)
-- **ci** run starts on the newly-created backport PR
+- A new PR appears titled `[Backport release/2026.q3] Fix token refresh...`
+- **ci** runs start on **both** PRs in parallel
 
-Say: *"Both PRs are open. Both CIs are running in parallel. Same wall time as running one PR alone."*
+Say: *"One PR opened, but the workflow cherry-picked the fix onto `release/2026.q3` and opened a second PR against it. Both CIs run at the same time — same wall time as a single PR."*
 
 ## Step 3 — Watch the mutual gate
 
@@ -52,66 +46,57 @@ Switch to the main PR → scroll to the checks section.
 Expected sequence:
 
 - `ci` — pending, then green (~1–2 min)
-- `partner-ci` — appears after backport PR's `ci` finishes, mirrors it green
+- `partner-ci` — appears after the backport PR's `ci` finishes, mirrors it green
 - Backport PR: same story, other direction
 
-Say: *"Neither PR shows the merge button as clickable until both `ci` and `partner-ci` are green. Branch protection is enforcing that."*
+Say: *"Neither PR's merge button is clickable until both `ci` and `partner-ci` are green. Branch protection enforces that."*
 
 ## Step 4 — Prove the mutual gate blocks
 
-This is the money shot. Deliberately break the backport PR.
+The money shot. Deliberately break the backport PR.
 
-1. Switch to the **backport PR** (title starts with `[Backport release/2026.q3]`)
-2. Click **Files changed** tab → find `hello.py` → click the `...` menu → **Edit file**
+1. Switch to the **backport PR**
+2. **Files changed** → find `hello.py` → `...` menu → **Edit file**
 3. Change the fix back to the buggy version:
    ```
    return user.get("token")
    ```
-4. **Commit changes** directly to the backport branch (this is fine, you're pushing to your own PR branch, not a protected branch)
+4. **Commit changes** directly to the backport branch
 
-Wait ~1–2 minutes. Watch:
+Wait ~1–2 minutes:
 
-- Backport PR's `ci` turns **red** (test fails on the reintroduced bug)
-- Main PR's `partner-ci` turns **red** — mirrored from the backport failure
+- Backport PR's `ci` turns **red**
+- Main PR's `partner-ci` turns **red** — mirrored from the backport
 - Main PR's own `ci` is still green, but the merge button is disabled
 
-Say: *"Main PR passes its own tests. But the mutual gate is blocking it because the backport is broken. This is what 'atomicity substitute' looks like in native GitHub."*
+Say: *"Main passes its own tests. But the mutual gate blocks it because the backport is broken. This is atomicity without an orchestrator."*
 
 ## Step 5 — Fix and merge
 
-1. On the backport PR: pencil-edit `hello.py` again, restore the `-rotated` fix, commit
+1. On the backport PR: restore the `-rotated` fix, commit
 2. Wait for `ci` to go green
 3. Watch `partner-ci` on the main PR flip back to green
-4. Merge the main PR: **Merge pull request** → **Confirm merge** → **Delete branch**
-5. Merge the backport PR: same three clicks
+4. Merge the main PR → **Delete branch**
+5. Merge the backport PR → **Delete branch**
 
-Say: *"Both branches now have the fix. Same commit content, applied to each release independently, both under mutual gate. No orchestrator, no lock, no compensating rollback."*
+Say: *"Both branches now have the fix. No orchestrator, no lock, no compensating rollback."*
 
-## What to say if asked "can the backport open even earlier"
+## FAQ during demo
 
-> Yes — apply the label at PR-open time via a PR template checkbox, or automatically via a workflow that inspects the PR title / commit messages. The action itself already fires on the label event, so anything that adds the label works.
+**"What if we don't want to backport a change?"**
+Close the auto-opened backport PR without merging. `pair-lifecycle.yml` posts `partner-ci = success` on the main PR — the mutual gate releases, main merges alone.
 
-## What to say about merge conflicts
+**"What about merge conflicts on the cherry-pick?"**
+Backport PR opens with conflict markers in the file and a ⚠️ note in the body. Developer pulls, resolves, pushes. Same flow.
 
-- **Case A (cherry-pick can't apply cleanly):** the workflow still pushes the branch with markers, opens the PR with a ⚠️ note. Developer pulls, resolves, pushes.
-- **Case B (backport PR gets stale vs release/2026.q3):** normal GitHub "resolve conflicts" flow — web UI or local rebase.
-- **Case C (either PR gets a force-push):** check-runs are per-SHA, so old status naturally invalidates. New CI runs, new mirror. No stale state.
-
-Full details in `README.md` under "What happens when there's a merge conflict?"
+**"What if someone force-pushes?"**
+Check-runs are per-SHA. Old status becomes irrelevant on the new SHA, CI re-runs, mirror re-fires. No cleanup logic needed.
 
 ## Cleanup between demo runs
 
-Delete the fix and backport branches (both auto-delete if you clicked "Delete branch" after each merge). Then close any lingering PRs. If you push to main by accident:
+Both PRs auto-delete their branches on merge. If a demo run leaves stragglers:
 
 ```bash
-cd /tmp/branching-demo && git fetch origin
-git switch main && git reset --hard <last-good-SHA>
-git push --force-with-lease origin main
-```
-
-To reset the whole demo to a clean seed:
-
-```bash
-git switch main            && git reset --hard <last-good-main>            && git push --force-with-lease origin main
-git switch release/2026.q3 && git reset --hard <last-good-release>         && git push --force-with-lease origin release/2026.q3
+cd /tmp/branching-demo-fresh
+gh pr list --state open --json number --jq '.[].number' | xargs -I {} gh pr close {} --delete-branch
 ```
